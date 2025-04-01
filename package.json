@@ -1,0 +1,30 @@
+{
+  "name": "shared-memory-store",
+  "version": "1.0.0",
+  "description": "High-performance memory store for JavaScript objects with optional expiry",
+  "main": "index.js",
+  "gypfile": true,
+  "keywords": [
+    "memory",
+    "store",
+    "cache",
+    "napi",
+    "native"
+  ],
+  "scripts": {
+    "build": "node-gyp rebuild",
+    "clean": "node-gyp clean",
+    "test": "node test.js"
+  },
+  "author": "@kmoz000",
+  "license": "MIT",
+  "repository": {
+    "url": "https://github.com/kmoz000/shared-memory-store.git"
+  },
+  "devDependencies": {
+    "node-gyp": "11.2.0"
+  },
+  "dependencies": {
+    "node-addon-api": "8.3.1"
+  }
+}
