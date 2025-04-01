@@ -1,0 +1,29 @@
+name: "Close stale issues"
+on:
+  schedule:
+  - cron: "0 0 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  stale:
+    permissions:
+      issues: write  # for actions/stale to close stale issues
+      pull-requests: write  # for actions/stale to close stale PRs
+    runs-on: ubuntu-latest
+    steps:
+    - name: Harden Runner
+      uses: step-security/harden-runner@4d991eb9b905ef189e4c376166672c3f2f230481 # v2.11.0
+      with:
+        egress-policy: audit
+
+    - uses: actions/stale@5bef64f19d7facfb25b37b414482c7164d639639 # v9.1.0
+      with:
+        repo-token: ${{ secrets.GITHUB_TOKEN }}
+        stale-issue-message: 'This issue is stale because it has been open many days with no activity. It will be closed soon unless the stale label is removed or a comment is made.'
+        stale-issue-label: 'stale'
+        exempt-issue-labels: 'never-stale'
+        days-before-stale: 90
+        days-before-close: 30
+
