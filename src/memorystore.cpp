@@ -47,32 +47,28 @@ private:
       return value.As<Napi::Boolean>().Value() ? "true" : "false";
     }
     
-    // For objects, use a safer approach
+    // For objects, use a safer approach without try-catch
     Napi::Env env = value.Env();
-    try {
-      // Check if the object has a toString method
-      if (value.IsObject()) {
-        Napi::Object obj = value.As<Napi::Object>();
-        // Check if it's our proxy object with __keyId
-        if (obj.Has("__keyId") && obj.Get("__keyId").IsString()) {
-          return obj.Get("__keyId").As<Napi::String>().Utf8Value();
-        }
+    
+    // Check if the object has a toString method
+    if (value.IsObject()) {
+      Napi::Object obj = value.As<Napi::Object>();
+      // Check if it's our proxy object with __keyId
+      if (obj.Has("__keyId") && obj.Get("__keyId").IsString()) {
+        return obj.Get("__keyId").As<Napi::String>().Utf8Value();
       }
-      
-      // Last resort - use JSON.stringify
-      Napi::Object JSON = env.Global().Get("JSON").As<Napi::Object>();
-      Napi::Function stringify = JSON.Get("stringify").As<Napi::Function>();
-      Napi::Value result = stringify.Call(JSON, {value});
-      
-      if (result.IsString()) {
-        return result.As<Napi::String>().Utf8Value();
-      }
-      
-      return "[object Object]";
-    } catch (const std::exception&) {
-      // If all conversion attempts fail, return a safe default
-      return "[object Object]";
     }
+    
+    // Last resort - use JSON.stringify
+    Napi::Object JSON = env.Global().Get("JSON").As<Napi::Object>();
+    Napi::Function stringify = JSON.Get("stringify").As<Napi::Function>();
+    Napi::Value result = stringify.Call(JSON, {value});
+    
+    if (result.IsString()) {
+      return result.As<Napi::String>().Utf8Value();
+    }
+    
+    return "[object Object]";
   }
 
   Napi::Value Set(const Napi::CallbackInfo& info);
@@ -191,7 +187,6 @@ Napi::Value MemoryStore::CreateMutableKey(const Napi::CallbackInfo& info) {
     
     if (prop.IsString() && prop.As<Napi::String>().Utf8Value() == "toString") {
       return Napi::Function::New(env, [](const Napi::CallbackInfo& info) -> Napi::Value {
-        Napi::Env env = info.Env();
         Napi::Object thisObj = info.This().As<Napi::Object>();
         Napi::Object target = thisObj.Get("target").As<Napi::Object>();
         return target.Get("value").ToString();
@@ -200,7 +195,6 @@ Napi::Value MemoryStore::CreateMutableKey(const Napi::CallbackInfo& info) {
 
     if (prop.IsString() && prop.As<Napi::String>().Utf8Value() == "valueOf") {
       return Napi::Function::New(env, [](const Napi::CallbackInfo& info) -> Napi::Value {
-        Napi::Env env = info.Env();
         Napi::Object thisObj = info.This().As<Napi::Object>();
         Napi::Object target = thisObj.Get("target").As<Napi::Object>();
         return target.Get("value");
@@ -210,7 +204,7 @@ Napi::Value MemoryStore::CreateMutableKey(const Napi::CallbackInfo& info) {
     return target.Get("value");
   });
   
-  Napi::Function setFunction = Napi::Function::New(env, [this](const Napi::CallbackInfo& info) -> Napi::Value {
+  Napi::Function setFunction = Napi::Function::New(env, [](const Napi::CallbackInfo& info) -> Napi::Value {
     Napi::Env env = info.Env();
     Napi::Object target = info[0].As<Napi::Object>();
     Napi::Value newValue = info[2];
