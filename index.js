@@ -1,4 +1,4 @@
-const { MemoryStore } = require('./build/Release/memorystore');
+const { MemoryStore } = require('./build/Release/memorystore.node');
 
 class MemoryStoreWrapper {
     constructor(options = {}) {

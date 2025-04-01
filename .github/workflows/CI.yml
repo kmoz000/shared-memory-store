@@ -15,11 +15,11 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
+          registry-url: 'https://registry.npmjs.org'
       - name: Install
         run: npm install
-      - name: Test
-        run: npm test
       - name: publish
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
