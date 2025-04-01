@@ -1,6 +1,6 @@
 {
   "name": "shared-memory-store",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "High-performance memory store for JavaScript objects with optional expiry",
   "main": "index.js",
   "gypfile": true,
