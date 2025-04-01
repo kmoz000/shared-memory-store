@@ -14,15 +14,15 @@ A high-performance C++ native addon for Node.js/Bun that provides a shared memor
 ## Installation
 
 ```bash
-npm install bun-shared-state
+npm install shared-memory-store
 # or
-bun add bun-shared-state
+bun add shared-memory-store
 ```
 
 ## Basic Usage
 
 ```javascript
-const MemoryStore = require('bun-shared-state');
+const MemoryStore = require('shared-memory-store');
 
 // Create a memory store with cleanup every 5 seconds
 const store = new MemoryStore({ cleanupInterval: 5000 });
