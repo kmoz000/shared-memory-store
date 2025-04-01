@@ -29,34 +29,49 @@ private:
     Napi::ObjectReference proxyRef;
   };
 
-  // Safe string conversion helper
+  // Safe string conversion helper - improved to avoid crashes
   std::string SafeGetString(const Napi::Value& value) {
     if (value.IsNull() || value.IsUndefined()) {
       return "";
     }
-
+    
     if (value.IsString()) {
       return value.As<Napi::String>().Utf8Value();
     }
-
+    
+    if (value.IsNumber()) {
+      return std::to_string(value.As<Napi::Number>().DoubleValue());
+    }
+    
+    if (value.IsBoolean()) {
+      return value.As<Napi::Boolean>().Value() ? "true" : "false";
+    }
+    
+    // For objects, use a safer approach
     Napi::Env env = value.Env();
     try {
+      // Check if the object has a toString method
       if (value.IsObject()) {
         Napi::Object obj = value.As<Napi::Object>();
-        if (obj.Has("toString") && obj.Get("toString").IsFunction()) {
-          Napi::Function toStringFn = obj.Get("toString").As<Napi::Function>();
-          Napi::Value strValue = toStringFn.Call(obj, {});
-          if (strValue.IsString()) {
-            return strValue.As<Napi::String>().Utf8Value();
-          }
+        // Check if it's our proxy object with __keyId
+        if (obj.Has("__keyId") && obj.Get("__keyId").IsString()) {
+          return obj.Get("__keyId").As<Napi::String>().Utf8Value();
         }
       }
-      // Fallback to default conversion
-      return value.ToString().Utf8Value();
-    } catch (const Napi::Error& e) {
-      // Log the error and return an empty string
-      Napi::Error::Fatal("SafeGetString", ("Failed to convert value to string: " + std::string(e.Message())).c_str());
-      return "";
+      
+      // Last resort - use JSON.stringify
+      Napi::Object JSON = env.Global().Get("JSON").As<Napi::Object>();
+      Napi::Function stringify = JSON.Get("stringify").As<Napi::Function>();
+      Napi::Value result = stringify.Call(JSON, {value});
+      
+      if (result.IsString()) {
+        return result.As<Napi::String>().Utf8Value();
+      }
+      
+      return "[object Object]";
+    } catch (const std::exception&) {
+      // If all conversion attempts fail, return a safe default
+      return "[object Object]";
     }
   }
 
@@ -71,6 +86,7 @@ private:
   Napi::Value StartCleanupTask(const Napi::CallbackInfo& info);
   Napi::Value StopCleanupTask(const Napi::CallbackInfo& info);
   Napi::Value CreateMutableKey(const Napi::CallbackInfo& info);
+  Napi::Value All(const Napi::CallbackInfo& info);
 
   void CleanupExpiredItems();
   void CleanupWorker();
@@ -96,7 +112,8 @@ Napi::Object MemoryStore::Init(Napi::Env env, Napi::Object exports) {
     InstanceMethod("getKeys", &MemoryStore::GetKeys),
     InstanceMethod("startCleanupTask", &MemoryStore::StartCleanupTask),
     InstanceMethod("stopCleanupTask", &MemoryStore::StopCleanupTask),
-    InstanceMethod("createMutableKey", &MemoryStore::CreateMutableKey)
+    InstanceMethod("createMutableKey", &MemoryStore::CreateMutableKey),
+    InstanceMethod("all", &MemoryStore::All)
   });
 
   Napi::FunctionReference* constructor = new Napi::FunctionReference();
@@ -138,14 +155,15 @@ Napi::Value MemoryStore::CreateMutableKey(const Napi::CallbackInfo& info) {
   }
 
   Napi::Value initialValue = info[0];
-  std::string initialKeyString = SafeGetString(initialValue);
   
-  // Create unique ID for this key
-  std::string uniqueId = initialKeyString + "_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+  // Generate a unique ID without using SafeGetString which could cause issues
+  std::string uniqueId = "key_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
 
   // Create the key wrapper
   auto keyWrapper = std::make_shared<KeyWrapper>();
-  keyWrapper->keyString = initialKeyString;
+  
+  // For the initial representation, we'll store it later after creating the proxy
+  keyWrapper->keyString = uniqueId;
 
   // Store in our map (thread-safe)
   {
@@ -200,19 +218,11 @@ Napi::Value MemoryStore::CreateMutableKey(const Napi::CallbackInfo& info) {
     // Get the keyId to identify which key is being modified
     std::string keyId = target.Get("__keyId").As<Napi::String>().Utf8Value();
     
-    std::string newKeyString = SafeGetString(newValue);
-    
     // Update the target
     target.Set("value", newValue);
     
-    // Update our key wrapper (thread-safe)
-    {
-      std::lock_guard<std::mutex> lock(storeMutex);
-      auto it = keyWrappers.find(keyId);
-      if (it != keyWrappers.end()) {
-        it->second->keyString = newKeyString;
-      }
-    }
+    // We won't update the keyString here to avoid potential issues
+    // The keyId is sufficient for lookups
     
     return Napi::Boolean::New(env, true);
   });
@@ -256,37 +266,31 @@ Napi::Value MemoryStore::Set(const Napi::CallbackInfo& info) {
     }
   }
 
-  // Determine if this is a mutable key proxy
+  // Determine key
   std::string keyString;
-  std::string keyId;
   
-  if (!keyValue.IsNull() && !keyValue.IsUndefined() && keyValue.IsObject() && !keyValue.IsString()) {
+  if (keyValue.IsObject() && !keyValue.IsString()) {
     Napi::Object keyObj = keyValue.As<Napi::Object>();
     
     // Check if it has our special property
-    if (keyObj.Has("__keyId")) {
-      Napi::Value idValue = keyObj.Get("__keyId");
-      if (!idValue.IsNull() && !idValue.IsUndefined() && idValue.IsString()) {
-        keyId = idValue.As<Napi::String>().Utf8Value();
-        
-        // Look up the current key string
-        std::lock_guard<std::mutex> lock(storeMutex);
-        auto it = keyWrappers.find(keyId);
-        if (it != keyWrappers.end()) {
-          keyString = it->second->keyString;
-        } else {
-          // If not found, fall back to string representation
-          keyString = SafeGetString(keyValue);
-        }
+    if (keyObj.Has("__keyId") && keyObj.Get("__keyId").IsString()) {
+      std::string keyId = keyObj.Get("__keyId").As<Napi::String>().Utf8Value();
+      
+      // Look up the current key string
+      std::lock_guard<std::mutex> lock(storeMutex);
+      auto it = keyWrappers.find(keyId);
+      if (it != keyWrappers.end()) {
+        keyString = keyId; // Use the ID directly instead of a converted string
       } else {
-        keyString = SafeGetString(keyValue);
+        // Use the ID directly
+        keyString = keyId;
       }
     } else {
-      // Regular object, use toString
+      // For other objects, use our SafeGetString
       keyString = SafeGetString(keyValue);
     }
   } else {
-    // Regular key (string or other primitive)
+    // For strings and primitives
     keyString = SafeGetString(keyValue);
   }
 
@@ -320,28 +324,15 @@ Napi::Value MemoryStore::Get(const Napi::CallbackInfo& info) {
 
   Napi::Value keyValue = info[0];
   
-  // Similar logic as in Set to determine the key string
+  // Determine the key string using the same logic as in Set
   std::string keyString;
-  std::string keyId;
   
-  if (!keyValue.IsNull() && !keyValue.IsUndefined() && keyValue.IsObject() && !keyValue.IsString()) {
+  if (keyValue.IsObject() && !keyValue.IsString()) {
     Napi::Object keyObj = keyValue.As<Napi::Object>();
     
-    if (keyObj.Has("__keyId")) {
-      Napi::Value idValue = keyObj.Get("__keyId");
-      if (!idValue.IsNull() && !idValue.IsUndefined() && idValue.IsString()) {
-        keyId = idValue.As<Napi::String>().Utf8Value();
-        
-        std::lock_guard<std::mutex> lock(storeMutex);
-        auto it = keyWrappers.find(keyId);
-        if (it != keyWrappers.end()) {
-          keyString = it->second->keyString;
-        } else {
-          keyString = SafeGetString(keyValue);
-        }
-      } else {
-        keyString = SafeGetString(keyValue);
-      }
+    if (keyObj.Has("__keyId") && keyObj.Get("__keyId").IsString()) {
+      std::string keyId = keyObj.Get("__keyId").As<Napi::String>().Utf8Value();
+      keyString = keyId; // Use the ID directly
     } else {
       keyString = SafeGetString(keyValue);
     }
@@ -377,28 +368,15 @@ Napi::Value MemoryStore::Has(const Napi::CallbackInfo& info) {
 
   Napi::Value keyValue = info[0];
   
-  // Similar logic as in Get to determine the key string
+  // Determine the key string using the same logic as in Set/Get
   std::string keyString;
-  std::string keyId;
   
-  if (!keyValue.IsNull() && !keyValue.IsUndefined() && keyValue.IsObject() && !keyValue.IsString()) {
+  if (keyValue.IsObject() && !keyValue.IsString()) {
     Napi::Object keyObj = keyValue.As<Napi::Object>();
     
-    if (keyObj.Has("__keyId")) {
-      Napi::Value idValue = keyObj.Get("__keyId");
-      if (!idValue.IsNull() && !idValue.IsUndefined() && idValue.IsString()) {
-        keyId = idValue.As<Napi::String>().Utf8Value();
-        
-        std::lock_guard<std::mutex> lock(storeMutex);
-        auto it = keyWrappers.find(keyId);
-        if (it != keyWrappers.end()) {
-          keyString = it->second->keyString;
-        } else {
-          keyString = SafeGetString(keyValue);
-        }
-      } else {
-        keyString = SafeGetString(keyValue);
-      }
+    if (keyObj.Has("__keyId") && keyObj.Get("__keyId").IsString()) {
+      std::string keyId = keyObj.Get("__keyId").As<Napi::String>().Utf8Value();
+      keyString = keyId; // Use the ID directly
     } else {
       keyString = SafeGetString(keyValue);
     }
@@ -434,28 +412,15 @@ Napi::Value MemoryStore::Delete(const Napi::CallbackInfo& info) {
 
   Napi::Value keyValue = info[0];
   
-  // Similar logic as in Get/Has to determine the key string
+  // Determine the key string using the same logic as other methods
   std::string keyString;
-  std::string keyId;
   
-  if (!keyValue.IsNull() && !keyValue.IsUndefined() && keyValue.IsObject() && !keyValue.IsString()) {
+  if (keyValue.IsObject() && !keyValue.IsString()) {
     Napi::Object keyObj = keyValue.As<Napi::Object>();
     
-    if (keyObj.Has("__keyId")) {
-      Napi::Value idValue = keyObj.Get("__keyId");
-      if (!idValue.IsNull() && !idValue.IsUndefined() && idValue.IsString()) {
-        keyId = idValue.As<Napi::String>().Utf8Value();
-        
-        std::lock_guard<std::mutex> lock(storeMutex);
-        auto it = keyWrappers.find(keyId);
-        if (it != keyWrappers.end()) {
-          keyString = it->second->keyString;
-        } else {
-          keyString = SafeGetString(keyValue);
-        }
-      } else {
-        keyString = SafeGetString(keyValue);
-      }
+    if (keyObj.Has("__keyId") && keyObj.Get("__keyId").IsString()) {
+      std::string keyId = keyObj.Get("__keyId").As<Napi::String>().Utf8Value();
+      keyString = keyId; // Use the ID directly
     } else {
       keyString = SafeGetString(keyValue);
     }
@@ -544,6 +509,38 @@ Napi::Value MemoryStore::GetKeys(const Napi::CallbackInfo& info) {
   }
   
   return keysArray;
+}
+
+Napi::Value MemoryStore::All(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  
+  auto now = std::chrono::steady_clock::now();
+  
+  // First count valid items to pre-size the array
+  size_t validItemCount = 0;
+  {
+    std::lock_guard<std::mutex> lock(storeMutex);
+    for (const auto& pair : store) {
+      if (pair.second.isPermanent || pair.second.maxAgeMs == 0 || now < pair.second.expiresAt) {
+        validItemCount++;
+      }
+    }
+  }
+  
+  Napi::Array valuesArray = Napi::Array::New(env, validItemCount);
+  
+  // Populate the array with all stored values
+  {
+    std::lock_guard<std::mutex> lock(storeMutex);
+    size_t index = 0;
+    for (const auto& pair : store) {
+      if (pair.second.isPermanent || pair.second.maxAgeMs == 0 || now < pair.second.expiresAt) {
+        valuesArray.Set(index++, pair.second.value.Value());
+      }
+    }
+  }
+  
+  return valuesArray;
 }
 
 Napi::Value MemoryStore::StartCleanupTask(const Napi::CallbackInfo& info) {
