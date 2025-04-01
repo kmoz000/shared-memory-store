@@ -30,32 +30,32 @@ jobs:
         settings:
           - host: macos-latest
             target: x86_64-apple-darwin
-            build: npm run build --target x86_64-apple-darwin
+            build: npm run build -- --target_arch=x64 --target_platform=darwin
           - host: windows-latest
-            build: npm run build --target x86_64-pc-windows-msvc
+            build: npm run build -- --target_arch=x64 --target_platform=win32
             target: x86_64-pc-windows-msvc
           - host: windows-latest
-            build: npm run build --target i686-pc-windows-msvc
+            build: npm run build -- --target_arch=ia32 --target_platform=win32
             target: i686-pc-windows-msvc
           - host: macos-latest
             target: aarch64-apple-darwin
-            build: npm run build --target aarch64-apple-darwin
+            build: npm run build -- --target_arch=arm64 --target_platform=darwin
           - host: ubuntu-latest
             target: armv7-unknown-linux-gnueabihf
             setup: |
               sudo apt-get update
               sudo apt-get install gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf -y
             build: |
-              npm run build --target armv7-unknown-linux-gnueabihf
+              npm run build -- --target_arch=arm --target_platform=linux
           - host: ubuntu-latest
             target: aarch64-linux-android
-            build: npm run build --target aarch64-linux-android
+            build: npm run build -- --target_arch=arm64 --target_platform=android
           - host: ubuntu-latest
             target: armv7-linux-androideabi
-            build: npm run build --target armv7-linux-androideabi
+            build: npm run build -- --target_arch=arm --target_platform=android
           - host: windows-latest
             target: aarch64-pc-windows-msvc
-            build: npm run build --target aarch64-pc-windows-msvc
+            build: npm run build -- --target_arch=arm64 --target_platform=win32
     name: stable - ${{ matrix.settings.target }} - node@18
     runs-on: ${{ matrix.settings.host }}
     steps:
